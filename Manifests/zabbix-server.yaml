@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zabbix-server
+  labels:
+    app: zabbix
+    tier: server
+    environment: dev
+  namespace: zabbix
+spec:
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      name: zabbix-server
+      app: zabbix
+  template:
+    metadata:
+      labels:
+        name: zabbix-server
+        app: zabbix
+    spec:
+      volumes:
+       - name: zabbix-snmptraps
+         emptyDir: {}
+       - name: mysql-tls-certs
+         secret:
+           secretName: zabbix-mysql-client-tls-certs
+      containers:
+        - name: zabbix-server
+          image: zabbix/zabbix-server-mysql:alpine-7.0-latest
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 10051
+            protocol: TCP
+            name: zabbix-trapper
+          readinessProbe:
+            tcpSocket:
+              port: zabbix-trapper
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: zabbix-trapper
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          env:
+          - name: TZ
+            value: "America/Bogota"
+          - name: MYSQL_USER
+            valueFrom:
+             secretKeyRef:
+              name: db-secret
+              key: db-zbx-user
+          - name: MYSQL_PASSWORD
+            valueFrom:
+             secretKeyRef:
+              name: db-secret
+              key: db-zbx-pass
+          - name: MYSQL_ROOT_PASSWORD
+            valueFrom:
+             secretKeyRef:
+              name: db-secret
+              key: db-root-pass
+          - name: MYSQL_DATABASE
+            value: "zabbix"
+          - name: ZBX_SERVER_HOST
+            value: "zabbix-server"  
+          - name: ZBX_DBTLSCONNECT
+            value: "required"
+          - name: ZBX_DBTLSCAFILE
+            value: "/tmp/secrets/root-ca.pem"
+          - name: ZBX_DBTLSCERTFILE
+            value: "/tmp/secrets/client-cert.pem"
+          - name: ZBX_DBTLSKEYFILE
+            value: "/tmp/secrets/client-key.pem"
+          - name: ZBX_LISTENPORT
+            value: "10051"
+          - name: ZBX_STARTJAVAPOLLERS
+            value: "5"
+          - name: ZBX_ENABLE_SNMP_TRAPS
+            value: "true"
+          - name: ZBX_LOGSLOWQUERIES
+            value: "3000"
+          startupProbe:
+            tcpSocket:
+              port: 10051
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 40
+          securityContext:
+            capabilities: {}
+            privileged: false
+          volumeMounts:
+          - name: zabbix-snmptraps
+            mountPath: "/var/lib/zabbix/snmptraps"
+            readOnly: true
+          - mountPath: "/tmp/secrets"
+            name: mysql-tls-certs
+            readOnly: true
+        - name: zabbix-snmptraps
+          image: zabbix/zabbix-snmptraps:alpine-7.0-latest
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 1162
+            protocol: UDP
+            name: snmp-trap
+          volumeMounts:
+          - name: zabbix-snmptraps
+            mountPath: /var/lib/zabbix/snmptraps/
+            readOnly: false
+          securityContext:
+            capabilities: {}
+            privileged: false
